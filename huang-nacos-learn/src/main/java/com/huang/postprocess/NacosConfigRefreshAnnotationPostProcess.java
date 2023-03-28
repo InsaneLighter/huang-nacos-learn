@@ -5,10 +5,12 @@ import com.alibaba.nacos.api.config.ConfigType;
 import com.alibaba.nacos.api.config.PropertyChangeType;
 import com.alibaba.nacos.api.config.annotation.NacosValue;
 import com.alibaba.spring.beans.factory.annotation.AbstractAnnotationBeanPostProcessor;
+import com.huang.event.NacosConfigUpdateEvent;
 import com.huang.utils.NacosConfigParserUtils;
 import com.huang.utils.PlaceholderUtils;
 import org.springframework.beans.factory.annotation.InjectionMetadata;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationListener;
 import org.springframework.context.EnvironmentAware;
 import org.springframework.core.annotation.AnnotationAttributes;
 import org.springframework.core.convert.ConversionService;
@@ -17,6 +19,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.env.StandardEnvironment;
+import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.ReflectionUtils;
 import org.yaml.snakeyaml.Yaml;
@@ -33,21 +36,20 @@ import java.util.logging.Logger;
  * @version v0.0.1
  * @date 2022/6/7 17:31
  */
-public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationBeanPostProcessor
-    implements EnvironmentAware {
+@Component
+public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationBeanPostProcessor implements EnvironmentAware, ApplicationListener<NacosConfigUpdateEvent> {
 
     private final Logger logger = Logger.getLogger(NacosConfigRefreshAnnotationPostProcess.class.getName());
 
     /**
      * nacos对应的propertySource的类名称
      */
-    private static final String NACOS_PROPERTY_SOURCE_CLASS_NAME =
-        "com.alibaba.nacos.spring.core.env.NacosPropertySource";
+    private static final String NACOS_PROPERTY_SOURCE_CLASS_NAME = "com.alibaba.nacos.spring.core.env.NacosPropertySource";
 
     /**
      * nacos配置文件类型
      */
-    private static final String NACOS_CONFIG_TYPE = "nacos.config.type";
+    private static final String NACOS_CONFIG_TYPE = "spring.cloud.nacos.config.file-extension";
 
     /**
      * spring环境对象
@@ -57,7 +59,7 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
     /**
      * 存放被@Value和@NacosValue修饰的属性 key = 占位符 value = 属性集合
      */
-    private final static Map<String, List<FieldInstance>> placeholderValueTargetMap = new HashMap<>();
+    private final static Map<String, List<FieldInstance>> PLACEHOLDER_VALUE_TARGET_MAP = new HashMap<>();
 
     /**
      * 当前Nacos环境配置，第一次从环境对象中获取，后续变更后会被新的属性覆盖
@@ -67,25 +69,39 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
     /**
      * 类型转换服务
      */
-    private ConversionService conversionService = new DefaultConversionService();
+    private final ConversionService conversionService = new DefaultConversionService();
 
     public NacosConfigRefreshAnnotationPostProcess() {
         super(Value.class, NacosValue.class);
     }
 
     @Override
-    protected Object doGetInjectedBean(AnnotationAttributes annotationAttributes, Object o, String s, Class<?> aClass,
-        InjectionMetadata.InjectedElement injectedElement) throws Exception {
-        // 注解占位符内容
-        String placaholderKey = (String)annotationAttributes.get("value");
-        // 解析嵌套占位符（只剩下最外层占位符）
-        placaholderKey = PlaceholderUtils.parseStringValue(placaholderKey, standardEnvironment, null);
-        // 剔除默认值后的占位符
-        String key = PlaceholderUtils.getPlaceholderKey(placaholderKey);
-        // 默认值
-        String defaultValue = PlaceholderUtils.getPlaceholderDefaultValue(placaholderKey);
+    public void onApplicationEvent(NacosConfigUpdateEvent event) {
+        // 将配置内容解析成键值对
+        Map<String, Object> newConfigMap = null;
+        try {
+            newConfigMap = parseNacosConfigContext((String) event.getSource());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        // 刷新变更对象的值
+        refreshTargetObjectFieldValue(newConfigMap);
+        // 当前配置指向最新的配置
+        currentPlaceholderConfigMap = newConfigMap;
+    }
 
-        Field field = (Field)injectedElement.getMember();
+    @Override
+    protected Object doGetInjectedBean(AnnotationAttributes annotationAttributes, Object o, String s, Class<?> aClass, InjectionMetadata.InjectedElement injectedElement) throws Exception {
+        // 注解占位符内容
+        String placeholderKey = (String) annotationAttributes.get("value");
+        // 解析嵌套占位符（只剩下最外层占位符）
+        placeholderKey = PlaceholderUtils.parseStringValue(placeholderKey, standardEnvironment, null);
+        // 剔除默认值后的占位符
+        String key = PlaceholderUtils.getPlaceholderKey(placeholderKey);
+        // 默认值
+        String defaultValue = PlaceholderUtils.getPlaceholderDefaultValue(placeholderKey);
+
+        Field field = (Field) injectedElement.getMember();
         // 属性记录到缓存中
         addFieldInstance(key, field, o);
 
@@ -100,18 +116,17 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
     }
 
     @Override
-    protected String buildInjectedObjectCacheKey(AnnotationAttributes annotationAttributes, Object o, String s,
-        Class<?> clazz, InjectionMetadata.InjectedElement injectedElement) {
+    protected String buildInjectedObjectCacheKey(AnnotationAttributes annotationAttributes, Object o, String s, Class<?> clazz, InjectionMetadata.InjectedElement injectedElement) {
         return o.getClass().getName() + "#" + injectedElement.getMember().getName();
     }
 
     @Override
     public void setEnvironment(Environment environment) {
-        this.standardEnvironment = (StandardEnvironment)environment;
+        this.standardEnvironment = (StandardEnvironment) environment;
         for (PropertySource<?> propertySource : standardEnvironment.getPropertySources()) {
             // 筛选出nacos的配置
             if (propertySource.getClass().getName().equals(NACOS_PROPERTY_SOURCE_CLASS_NAME)) {
-                MapPropertySource mapPropertySource = (MapPropertySource)propertySource;
+                MapPropertySource mapPropertySource = (MapPropertySource) propertySource;
                 // 配置以键值对形式存储到当前属性配置集合中
                 for (String propertyName : mapPropertySource.getPropertyNames()) {
                     currentPlaceholderConfigMap.put(propertyName, mapPropertySource.getProperty(propertyName));
@@ -122,18 +137,17 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
 
     /**
      * 刷新变更对象的值
-     * 
+     *
      * @param newConfigMap
      */
     private void refreshTargetObjectFieldValue(Map<String, Object> newConfigMap) {
         // 对比两次配置内容，筛选出变更后的配置项
-        Map<String, ConfigChangeItem> configChangeItemMap =
-                NacosConfigParserUtils.filterChangeData(currentPlaceholderConfigMap, newConfigMap);
+        Map<String, ConfigChangeItem> configChangeItemMap = NacosConfigParserUtils.filterChangeData(currentPlaceholderConfigMap, newConfigMap);
 
         // 反射给对象赋值
         for (String key : configChangeItemMap.keySet()) {
             // 没有用到的配置 直接跳过
-            if (!placeholderValueTargetMap.containsKey(key)) {
+            if (!PLACEHOLDER_VALUE_TARGET_MAP.containsKey(key)) {
                 continue;
             }
             ConfigChangeItem item = configChangeItemMap.get(key);
@@ -143,10 +157,10 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
                 continue;
             }
             // 嵌套占位符 防止中途嵌套中的配置变了 导致对象属性刷新失败
-            if (placeholderValueTargetMap.containsKey(item.getOldValue())) {
-                List<FieldInstance> fieldInstances = placeholderValueTargetMap.get(item.getOldValue());
-                placeholderValueTargetMap.put(item.getNewValue(), fieldInstances);
-                placeholderValueTargetMap.remove(item.getOldValue());
+            if (PLACEHOLDER_VALUE_TARGET_MAP.containsKey(item.getOldValue())) {
+                List<FieldInstance> fieldInstances = PLACEHOLDER_VALUE_TARGET_MAP.get(item.getOldValue());
+                PLACEHOLDER_VALUE_TARGET_MAP.put(item.getNewValue(), fieldInstances);
+                PLACEHOLDER_VALUE_TARGET_MAP.remove(item.getOldValue());
             }
             updateFieldValue(key, item.getNewValue(), item.getOldValue());
         }
@@ -154,7 +168,7 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
 
     /**
      * 解析nacos的配置
-     * 
+     *
      * @param newContent
      * @return
      * @throws Exception
@@ -164,13 +178,16 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
         String type = standardEnvironment.getProperty(NACOS_CONFIG_TYPE);
 
         Map<String, Object> newConfigMap = new HashMap<>(16);
-        if (ConfigType.YAML.getType().equals(type)) {
+        Properties newProps = new Properties();
+        newProps.load(new StringReader(newContent));
+        newConfigMap = new HashMap<>((Map) newProps);
+        /*if (ConfigType.YAML.getType().equals(type)) {
             newConfigMap = (new Yaml()).load(newContent);
         } else if (ConfigType.PROPERTIES.getType().equals(type)) {
             Properties newProps = new Properties();
             newProps.load(new StringReader(newContent));
-            newConfigMap = new HashMap<>((Map)newProps);
-        }
+            newConfigMap = new HashMap<>((Map) newProps);
+        }*/
         // 筛选出正确的配置
         return NacosConfigParserUtils.getFlattenedMap(newConfigMap);
     }
@@ -189,28 +206,26 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
 
     /**
      * 将被@Value和@NacosValue修饰的属性，以键值对的形式存放到当前属性配置集合中
-     * 
+     *
      * @param key
      * @param field
      * @param bean
      */
     private void addFieldInstance(String key, Field field, Object bean) {
-        List<FieldInstance> fieldInstances = placeholderValueTargetMap.get(key);
+        List<FieldInstance> fieldInstances = PLACEHOLDER_VALUE_TARGET_MAP.get(key);
         if (CollectionUtils.isEmpty(fieldInstances)) {
             fieldInstances = new ArrayList<>();
         }
         fieldInstances.add(new FieldInstance(bean, field));
-        placeholderValueTargetMap.put(key, fieldInstances);
+        PLACEHOLDER_VALUE_TARGET_MAP.put(key, fieldInstances);
     }
 
     /**
      * 反射修改变更的对象属性值
-     * 
-     * @param key
-     * @param newValue
+     *
      */
     private void updateFieldValue(String key, String newValue, String oldValue) {
-        List<FieldInstance> fieldInstances = placeholderValueTargetMap.get(key);
+        List<FieldInstance> fieldInstances = PLACEHOLDER_VALUE_TARGET_MAP.get(key);
         for (FieldInstance instance : fieldInstances) {
             try {
                 ReflectionUtils.makeAccessible(instance.field);
@@ -218,11 +233,9 @@ public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationB
                 Object value = conversionService.convert(newValue, instance.field.getType());
                 instance.field.set(instance.bean, value);
             } catch (Throwable e) {
-                logger.warning("Can't update value of the " + instance.field.getName() + " (field) in "
-                    + instance.bean.getClass().getSimpleName() + " (bean)");
+                logger.warning("Can't update value of the " + instance.field.getName() + " (field) in " + instance.bean.getClass().getSimpleName() + " (bean)");
             }
-            logger.info("Nacos-config-refresh-starter: " + instance.bean.getClass().getSimpleName() + "#"
-                + instance.field.getName() + " field value changed from [" + oldValue + "] to [" + newValue + "]");
+            logger.info("Nacos-config-refresh-starter: " + instance.bean.getClass().getSimpleName() + "#" + instance.field.getName() + " field value changed from [" + oldValue + "] to [" + newValue + "]");
         }
     }
 }

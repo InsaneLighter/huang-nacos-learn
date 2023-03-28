@@ -1,5 +1,6 @@
 package com.huang.utils;
 
+import com.alibaba.cloud.commons.lang.StringUtils;
 import com.alibaba.nacos.api.config.ConfigChangeItem;
 import com.alibaba.nacos.api.config.PropertyChangeType;
 
@@ -74,7 +75,7 @@ public class NacosConfigParserUtils {
         for (Iterator<Map.Entry<String, Object>> itr = source.entrySet().iterator(); itr.hasNext();) {
             Map.Entry<String, Object> e = itr.next();
             String key = e.getKey();
-            if (org.apache.commons.lang3.StringUtils.isNotBlank(path)) {
+            if (StringUtils.isNotBlank(path)) {
                 if (e.getKey().startsWith("[")) {
                     key = path + key;
                 } else {

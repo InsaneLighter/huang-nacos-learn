@@ -44,7 +44,7 @@ import java.util.logging.Logger;
  * Description:
  */
 @Slf4j
-@Component
+//@Component
 public class ConfigChangeListener extends AbstractConfigChangeListener {
     ConfigService configService;
 

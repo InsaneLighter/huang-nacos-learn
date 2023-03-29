@@ -1,5 +1,7 @@
 package com.huang.config;
 
+import lombok.Data;
+import lombok.ToString;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -9,16 +11,10 @@ import org.springframework.stereotype.Component;
  * className: ConfigProperties
  * Description:
  */
+@Data
+@ToString
 @Component
 @ConfigurationProperties("temp.nacos")
 public class ConfigProperties {
-    private String value;
-
-    public String getValue() {
-        return value;
-    }
-
-    public void setValue(String value) {
-        this.value = value;
-    }
+    private String key;
 }

@@ -36,7 +36,7 @@ import java.util.logging.Logger;
  * @version v0.0.1
  * @date 2022/6/7 17:31
  */
-@Component
+//@Component
 public class NacosConfigRefreshAnnotationPostProcess extends AbstractAnnotationBeanPostProcessor implements EnvironmentAware, ApplicationListener<NacosConfigUpdateEvent> {
 
     private final Logger logger = Logger.getLogger(NacosConfigRefreshAnnotationPostProcess.class.getName());

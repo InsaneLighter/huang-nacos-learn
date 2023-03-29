@@ -1,6 +1,8 @@
 package com.huang.controller;
 
 import com.alibaba.fastjson.JSONObject;
+import com.huang.config.ConfigProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,13 +20,18 @@ import java.util.Map;
 @RestController
 @RequestMapping
 public class DemoController {
-    @Value("${key}")
-    public String key;
+    @Autowired
+    public ConfigProperties configProperties;
+    @Value("${temp.nacos.key}")
+    private String key;
 
-    @GetMapping("/configChange")
-    public JSONObject configChange(){
-        return new JSONObject(){{
-            put("key",key);
-        }};
+    @GetMapping("/propertiesConfigChange")
+    public String propertiesConfigChange(){
+        return configProperties.toString();
+    }
+
+    @GetMapping("/valueConfigChange")
+    public String valueConfigChange(){
+        return key;
     }
 }
